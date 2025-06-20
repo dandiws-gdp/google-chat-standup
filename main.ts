@@ -3,8 +3,14 @@ const WEBHOOK_URL = Deno.env.get("GOOGLE_SPACE_WEBHOOK_URL");
 const ENVIRONMENT = Deno.env.get("ENVIRONMENT") || "development";
 
 if (!WEBHOOK_URL) {
-  console.error("Error: GOOGLE_SPACE_WEBHOOK_URL environment variable is not set");
-  Deno.exit(1);
+  const errorMsg = "Error: GOOGLE_SPACE_WEBHOOK_URL environment variable is not set";
+  console.error(errorMsg);
+  if (typeof Deno.exit === 'function') {
+    Deno.exit(1);
+  } else {
+    // In Deno Deploy, we'll log the error and continue
+    console.warn("Running in Deno Deploy - continuing without webhook URL");
+  }
 }
 
 // Timezone offset for UTC+7
@@ -19,8 +25,13 @@ function getJakartaTime(): Date {
 
 // Function to send message to Google Space webhook
 async function sendToWebhook(message: string): Promise<boolean> {
+  if (!WEBHOOK_URL) {
+    console.warn("Webhook URL is not set. Cannot send message.");
+    return false;
+  }
+
   try {
-    const response = await fetch(WEBHOOK_URL!, {
+    const response = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json; charset=UTF-8",
@@ -31,7 +42,8 @@ async function sendToWebhook(message: string): Promise<boolean> {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorText = await response.text().catch(() => 'No error details');
+      throw new Error(`HTTP error! status: ${response.status}, details: ${errorText}`);
     }
 
     console.log("Message sent successfully");
