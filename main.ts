@@ -1,0 +1,101 @@
+// Environment variables
+const WEBHOOK_URL = Deno.env.get("GOOGLE_SPACE_WEBHOOK_URL");
+const ENVIRONMENT = Deno.env.get("ENVIRONMENT") || "development";
+
+if (!WEBHOOK_URL) {
+  console.error("Error: GOOGLE_SPACE_WEBHOOK_URL environment variable is not set");
+  Deno.exit(1);
+}
+
+// Timezone offset for UTC+7
+const TIMEZONE_OFFSET = 7 * 60 * 60 * 1000; // 7 hours in milliseconds
+
+// Helper function to get current date in Jakarta time (UTC+7)
+function getJakartaTime(): Date {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  return new Date(utc + TIMEZONE_OFFSET);
+}
+
+// Function to send message to Google Space webhook
+async function sendToWebhook(message: string): Promise<boolean> {
+  try {
+    const response = await fetch(WEBHOOK_URL!, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({
+        text: message,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    console.log("Message sent successfully");
+    return true;
+  } catch (error) {
+    console.error("Error sending message to webhook:", error);
+    return false;
+  }
+}
+
+// Function to generate daily standup message
+function generateStandupMessage(): string {
+  const today = getJakartaTime();
+  const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(today);
+  const dateStr = new Intl.DateTimeFormat('en-US', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  }).format(today);
+  
+  return `⏰ *Daily Standup Reminder* ⏰\n\n` +
+    `Good morning team! ☀️\n\n` +
+    `*Date:* ${dayName}, ${dateStr}\n` +
+    `*Time:* 10:00 AM (UTC+7)\n\n` +
+    `Please share your updates for today's standup:\n` +
+    `1. What did you do yesterday?\n` +
+    `2. What will you do today?\n` +
+    `3. Any blockers or challenges?\n\n` +
+    `Let's have a great day! 🚀`;
+}
+
+// Main function to handle the scheduled job
+async function sendDailyStandup() {
+  if (ENVIRONMENT === "development") {
+    console.log("Running in development mode - no messages will be sent to webhook");
+    const message = generateStandupMessage();
+    console.log("Message that would be sent:", message);
+    return;
+  }
+
+  console.log("Sending daily standup reminder...");
+  const message = generateStandupMessage();
+  await sendToWebhook(message);
+}
+
+// For local testing
+if (import.meta.main) {
+  if (Deno.args[0] === "test") {
+    console.log("Running test message...");
+    await sendDailyStandup();
+  } else {
+    console.log("Starting daily standup scheduler...");
+    
+    // Run immediately when started (for testing)
+    if (ENVIRONMENT === "development") {
+      await sendDailyStandup();
+    }
+    
+    // Schedule the job to run every day at 10:00 AM UTC+7 (3:00 AM UTC)
+    Deno.cron("daily-standup", "0 3 * * *", async () => {
+      console.log("Cron job triggered at:", new Date().toISOString());
+      await sendDailyStandup();
+    });
+  }
+}
+
+export { sendDailyStandup };
