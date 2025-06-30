@@ -61,9 +61,9 @@ The cron job is set to run daily at 10:00 AM UTC+7 (3:00 AM UTC) using Deno Depl
 The daily standup message will look like this:
 
 ```
-:alarm_clock: *Daily Standup Reminder* :alarm_clock:
+⏰ *Daily Standup Reminder* ⏰
 
-Good morning team! :sunny:
+Good morning team! <users/all> ☀️
 
 *Date:* [Day of week], [Month] [Day], [Year]
 *Time:* 10:00 AM (UTC+7)
@@ -73,7 +73,7 @@ Please share your updates for today's standup:
 2. What will you do today?
 3. Any blockers or challenges?
 
-Let's have a great day! :rocket:
+Let's have a great day! 🚀
 ```
 
 ## License

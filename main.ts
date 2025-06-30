@@ -65,7 +65,7 @@ function generateStandupMessage(): string {
   }).format(today);
   
   return `⏰ *Daily Standup Reminder* ⏰\n\n` +
-    `Good morning team! ☀️\n\n` +
+    `Good morning team! <users/all> ☀️\n\n` +
     `*Date:* ${dayName}, ${dateStr}\n` +
     `*Time:* 10:00 AM (UTC+7)\n\n` +
     `Please share your updates for today's standup:\n` +
