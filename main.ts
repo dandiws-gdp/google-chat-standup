@@ -54,9 +54,32 @@ async function sendToWebhook(message: string): Promise<boolean> {
   }
 }
 
+// Function to generate weekly report reminder message
+function generateWeeklyReportMessage(date: Date): string {
+  const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date);
+
+  return `📊 *Weekly Report Reminder* 📊\n\n` +
+    `Good ${dayName}, team! <users/all> ☀️\n\n` +
+    `Don't forget to fill out your weekly report! Have a great weekend! 🌟`
+}
+
 // Function to generate daily standup message
-function generateStandupMessage(): string {
+function generateStandupMessage(): string | null {
   const today = getJakartaTime();
+  const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+  
+  // Don't send any message on Sunday
+  if (dayOfWeek === 0) {
+    console.log("It's Sunday - no message will be sent");
+    return null;
+  }
+  
+  // Send weekly report reminder on Saturday
+  if (dayOfWeek === 6) {
+    return generateWeeklyReportMessage(today);
+  }
+  
+  // Regular standup message for weekdays (Monday-Friday)
   const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(today);
   const dateStr = new Intl.DateTimeFormat('en-US', { 
     year: 'numeric', 
@@ -77,15 +100,20 @@ function generateStandupMessage(): string {
 
 // Main function to handle the scheduled job
 async function sendDailyStandup() {
+  const message = generateStandupMessage();
+  
+  if (message === null) {
+    console.log("No message to send (likely Sunday)");
+    return;
+  }
+
   if (ENVIRONMENT === "development") {
     console.log("Running in development mode - no messages will be sent to webhook");
-    const message = generateStandupMessage();
     console.log("Message that would be sent:", message);
     return;
   }
 
-  console.log("Sending daily standup reminder...");
-  const message = generateStandupMessage();
+  console.log("Sending reminder...");
   await sendToWebhook(message);
 }
 
