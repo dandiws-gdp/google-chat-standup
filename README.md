@@ -9,6 +9,7 @@ A Deno application that sends daily standup reminders to a Google Space at 10:00
 - Timezone-aware (UTC+7)
 - Development mode for testing without sending actual messages
 - Environment variable configuration
+- **NEW:** GitHub Pull Request reminders with author and reviewer details
 
 ## Prerequisites
 
@@ -23,6 +24,10 @@ Create a `.env` file in the project root with the following variables:
 ```env
 GOOGLE_SPACE_WEBHOOK_URL=your_webhook_url_here
 ENVIRONMENT=development  # Set to 'production' in production
+
+# GitHub PR Reminder (optional)
+GITHUB_TOKEN=your_github_personal_access_token
+GITHUB_REPOS=owner1/repo1,owner2/repo2,owner3/repo3
 ```
 
 ## Local Development
@@ -50,7 +55,43 @@ ENVIRONMENT=development  # Set to 'production' in production
 3. Set the following environment variables in the Deno Deploy dashboard:
    - `GOOGLE_SPACE_WEBHOOK_URL`: Your Google Space webhook URL
    - `ENVIRONMENT`: `production`
+   - `GITHUB_TOKEN`: Your GitHub personal access token (optional)
+   - `GITHUB_REPOS`: Comma-separated list of repositories to monitor (optional)
 4. Deploy the application
+
+## GitHub PR Reminder Configuration
+
+To enable GitHub Pull Request reminders:
+
+1. **Create a GitHub Personal Access Token:**
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Generate a new token with `repo` scope permissions
+   - Keep the token secure and never commit it to your repository
+
+2. **Configure Repositories:**
+   - Set `GITHUB_REPOS` to a comma-separated list of repositories in format `owner/repo`
+   - Example: `microsoft/vscode,facebook/react,torvalds/linux`
+
+3. **How it works:**
+   - The system fetches open pull requests from the specified repositories
+   - Only shows PRs that have requested reviewers (excluding drafts)
+   - Displays PR title, number, author, reviewers, creation date, and direct link
+   - PR reminders are appended to the daily standup message with a separator
+
+The PR reminder will look like this:
+```
+🔄 *Pull Requests Waiting for Review* 🔄
+
+The following PRs need your attention:
+
+📋 **owner/repo#123** - Add new feature implementation
+👤 *Author:* johndoe
+👥 *Reviewers:* janedoe, mike123
+📅 *Created:* Jan 15
+🔗 [View PR](https://github.com/owner/repo/pull/123)
+
+Please review these pull requests at your earliest convenience. Thank you! 🙏
+```
 
 ## Cron Schedule
 
