@@ -4,12 +4,12 @@ export interface GitHubPR {
   number: number;
   author: string;
   url: string;
-  reviewers: string[];
+  reviewers: Array<{login: string; status: string}>;
   createdAt: string;
   repository: string;
 }
 
-// Function to fetch pull requests waiting for review from GitHub
+// Function to fetch pull requests waiting for review from GitHub using GraphQL API
 export async function fetchPRsWaitingForReview(
   githubToken: string | undefined,
   githubRepos: string
@@ -35,13 +35,50 @@ export async function fetchPRsWaitingForReview(
         continue;
       }
 
-      const url = `https://api.github.com/repos/${owner}/${repoName}/pulls?state=open&sort=created&direction=desc`;
-      const response = await fetch(url, {
-        headers: {
-          "Authorization": `token ${githubToken}`,
-          "Accept": "application/vnd.github.v3+json",
-          "User-Agent": "google-chat-standup"
+      // GraphQL query to fetch PRs with reviewers and reviews in one call
+      const query = `
+        query {
+          repository(owner: "${owner}", name: "${repoName}") {
+            pullRequests(first: 100, states: OPEN, orderBy: {field: CREATED_AT, direction: DESC}) {
+              nodes {
+                number
+                title
+                url
+                createdAt
+                isDraft
+                author {
+                  login
+                }
+                reviewRequests(first: 20) {
+                  nodes {
+                    requestedReviewer {
+                      ... on User {
+                        login
+                      }
+                    }
+                  }
+                }
+                reviews(first: 50) {
+                  nodes {
+                    author {
+                      login
+                    }
+                    state
+                  }
+                }
+              }
+            }
+          }
         }
+      `;
+
+      const response = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          "Authorization": `bearer ${githubToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query })
       });
 
       if (!response.ok) {
@@ -49,43 +86,73 @@ export async function fetchPRsWaitingForReview(
         continue;
       }
 
-      const prs = await response.json();
+      const result = await response.json();
+      
+      if (result.errors) {
+        console.error(`GraphQL errors for ${repo}:`, result.errors);
+        continue;
+      }
+
+      const prs = result.data?.repository?.pullRequests?.nodes || [];
       
       for (const pr of prs) {
-        // Filter PRs that are waiting for review (not draft, not approved)
-        if (pr.draft) continue;
+        // Filter PRs that are waiting for review (not draft)
+        if (pr.isDraft) continue;
+        
+        const reviewerStatuses = new Map<string, string>();
         
         // Get requested reviewers
-        const reviewersUrl = `https://api.github.com/repos/${owner}/${repoName}/pulls/${pr.number}/requested_reviewers`;
-        const reviewersResponse = await fetch(reviewersUrl, {
-          headers: {
-            "Authorization": `token ${githubToken}`,
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "google-chat-standup"
-          }
-        });
+        const requestedReviewers = pr.reviewRequests?.nodes
+          ?.map((rr: any) => rr.requestedReviewer?.login)
+          .filter((login: string) => login) || [];
         
-        let reviewers: string[] = [];
-        if (reviewersResponse.ok) {
-          const reviewersData = await reviewersResponse.json();
-          // GitHub API returns {users: [...]} for requested_reviewers endpoint
-          if (reviewersData.users && Array.isArray(reviewersData.users)) {
-            reviewers = reviewersData.users.map((r: any) => r.login);
-          } else if (Array.isArray(reviewersData)) {
-            // Fallback if the structure is different
-            reviewers = reviewersData.map((r: any) => r.login);
+        // Initialize requested reviewers with "pending" status
+        for (const reviewer of requestedReviewers) {
+          reviewerStatuses.set(reviewer, "pending");
+        }
+        
+        // Process reviews to get reviewer statuses
+        const reviews = pr.reviews?.nodes || [];
+        for (const review of reviews) {
+          const reviewer = review.author?.login;
+          const state = review.state;
+          
+          if (!reviewer) continue;
+          
+          // Skip bot reviews and the PR author
+          if (reviewer === pr.author?.login || reviewer.includes('[bot]')) {
+            continue;
+          }
+          
+          // Add all reviewers (not just requested ones)
+          // Latest review state wins
+          if (state === "APPROVED") {
+            reviewerStatuses.set(reviewer, "approved");
+          } else if (state === "CHANGES_REQUESTED") {
+            reviewerStatuses.set(reviewer, "changes_requested");
+          } else if (state === "COMMENTED") {
+            // Only set to commented if not already approved or changes requested
+            if (!reviewerStatuses.has(reviewer) || reviewerStatuses.get(reviewer) === "pending") {
+              reviewerStatuses.set(reviewer, "commented");
+            }
           }
         }
         
-        // Only include PRs that have requested reviewers
-        if (reviewers.length > 0) {
+        // Convert to array format
+        const reviewersWithStatus = Array.from(reviewerStatuses.entries()).map(([login, status]) => ({
+          login,
+          status
+        }));
+        
+        // Only include PRs that have reviewers
+        if (reviewersWithStatus.length > 0) {
           allPRs.push({
             title: pr.title,
             number: pr.number,
-            author: pr.user.login,
-            url: pr.html_url,
-            reviewers: reviewers,
-            createdAt: pr.created_at,
+            author: pr.author?.login || "unknown",
+            url: pr.url,
+            reviewers: reviewersWithStatus,
+            createdAt: pr.createdAt,
             repository: repo
           });
         }
@@ -99,13 +166,17 @@ export async function fetchPRsWaitingForReview(
 }
 
 // Function to generate PR reminder message
-export function generatePRReminderMessage(prs: GitHubPR[]): string {
+export function generatePRReminderMessage(prs: GitHubPR[], maxAgeDays: number = 120): string {
   if (prs.length === 0) {
     return "";
   }
 
   let message = `🔄 *Pull Requests Reminder* 🔄\n\n`;
   message += `The following PRs need your attention:\n\n`;
+
+  // Calculate age threshold
+  const now = new Date();
+  const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
 
   // Group PRs by repository
   const prsByRepo = prs.reduce((acc, pr) => {
@@ -116,37 +187,117 @@ export function generatePRReminderMessage(prs: GitHubPR[]): string {
     return acc;
   }, {} as Record<string, GitHubPR[]>);
 
+  // Track hidden PRs per repository
+  const hiddenByRepo: Record<string, { fullyReviewed: number; tooOld: number }> = {};
+
   // Display PRs grouped by repository
   for (const [repository, repoPRs] of Object.entries(prsByRepo)) {
-    message += `*${repository}*\n\n`;
-    
-    for (const pr of repoPRs) {
-      const createdDate = new Date(pr.createdAt);
-      const formattedDate = createdDate.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric'
-      });
-      
-      // Calculate relative time
-      const now = new Date();
-      const diffMs = now.getTime() - createdDate.getTime();
-      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-      const diffDays = Math.floor(diffHours / 24);
-      
-      let relativeTime = "";
-      if (diffDays > 0) {
-        relativeTime = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-      } else if (diffHours > 0) {
-        relativeTime = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-      } else {
-        relativeTime = "just now";
-      }
-      
-      message += `#${pr.number} - <${pr.url}|${pr.title}>\n`;
-      message += `Author: ${pr.author}\n`;
-      message += `Reviewers: ${pr.reviewers.join(", ")}\n`;
-      message += `Created: ${formattedDate} (${relativeTime})\n\n`;
+    // Initialize tracking for this repo
+    if (!hiddenByRepo[repository]) {
+      hiddenByRepo[repository] = { fullyReviewed: 0, tooOld: 0 };
     }
+    
+    // Filter PRs by age first
+    const recentPRs = repoPRs.filter(pr => {
+      const prAge = now.getTime() - new Date(pr.createdAt).getTime();
+      return prAge <= maxAgeMs;
+    });
+    
+    const oldPRs = repoPRs.filter(pr => {
+      const prAge = now.getTime() - new Date(pr.createdAt).getTime();
+      return prAge > maxAgeMs;
+    });
+    
+    hiddenByRepo[repository].tooOld = oldPRs.length;
+    
+    // Then filter recent PRs by review status
+    const prsWithPendingReview = recentPRs.filter(pr => 
+      pr.reviewers.some(r => r.status === "pending")
+    );
+    
+    const prsFullyReviewed = recentPRs.filter(pr => 
+      !pr.reviewers.some(r => r.status === "pending")
+    );
+    
+    hiddenByRepo[repository].fullyReviewed = prsFullyReviewed.length;
+    
+    // Only show repository section if there are PRs with pending reviews
+    if (prsWithPendingReview.length > 0) {
+      message += `*${repository}*\n\n`;
+      
+      for (const pr of prsWithPendingReview) {
+        const createdDate = new Date(pr.createdAt);
+        const formattedDate = createdDate.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric'
+        });
+        
+        // Calculate relative time
+        const now = new Date();
+        const diffMs = now.getTime() - createdDate.getTime();
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffDays = Math.floor(diffHours / 24);
+        
+        let relativeTime = "";
+        if (diffDays > 0) {
+          relativeTime = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+        } else if (diffHours > 0) {
+          relativeTime = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+        } else {
+          relativeTime = "just now";
+        }
+        
+        message += `#${pr.number} - <${pr.url}|${pr.title}>\n`;
+        message += `Author: ${pr.author}\n`;
+        
+        // Format reviewers with status emojis
+        const reviewersList = pr.reviewers.map(r => {
+          let emoji = "";
+          switch (r.status) {
+            case "approved":
+              emoji = "✅";
+              break;
+            case "changes_requested":
+              emoji = "🔄";
+              break;
+            case "commented":
+              emoji = "💬";
+              break;
+            case "pending":
+            default:
+              emoji = "⏳";
+              break;
+          }
+          return `${r.login} ${emoji}`;
+        }).join(", ");
+        
+        message += `Reviewers: ${reviewersList}\n`;
+        message += `Created: ${formattedDate} (${relativeTime})\n\n`;
+      }
+    }
+  }
+
+  // Add summary at the end - show hidden counts per repository
+  const hasHiddenPRs = Object.values(hiddenByRepo).some(
+    counts => counts.fullyReviewed > 0 || counts.tooOld > 0
+  );
+  
+  if (hasHiddenPRs) {
+    message += `---\n`;
+    message += `Hidden PRs:\n\n`;
+    
+    for (const [repository, counts] of Object.entries(hiddenByRepo)) {
+      if (counts.fullyReviewed > 0 || counts.tooOld > 0) {
+        message += `${repository}:\n`;
+        if (counts.fullyReviewed > 0) {
+          message += `  - ${counts.fullyReviewed} PR${counts.fullyReviewed > 1 ? 's' : ''} fully reviewed\n`;
+        }
+        if (counts.tooOld > 0) {
+          message += `  - ${counts.tooOld} PR${counts.tooOld > 1 ? 's' : ''} older than ${maxAgeDays} days\n`;
+        }
+      }
+    }
+    message += `\n`;
   }
 
   message += `Please review these pull requests at your earliest convenience. Thank you!`;

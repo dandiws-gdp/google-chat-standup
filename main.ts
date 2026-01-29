@@ -3,6 +3,7 @@ const WEBHOOK_URL = Deno.env.get("GOOGLE_SPACE_WEBHOOK_URL");
 const ENVIRONMENT = Deno.env.get("ENVIRONMENT") || "development";
 const GITHUB_TOKEN = Deno.env.get("GITHUB_TOKEN");
 const GITHUB_REPOS = Deno.env.get("GITHUB_REPOS") || "";
+const MAX_PR_AGE_DAYS = parseInt(Deno.env.get("MAX_PR_AGE_DAYS") || "120", 10);
 
 // Import GitHub PR functionality
 import { fetchPRsWaitingForReview, generatePRReminderMessage } from "./github-prs.ts";
@@ -126,7 +127,7 @@ async function sendDailyStandup() {
 async function sendPRReminder() {
   // Fetch PRs waiting for review
   const prs = await fetchPRsWaitingForReview(GITHUB_TOKEN, GITHUB_REPOS);
-  const prMessage = generatePRReminderMessage(prs);
+  const prMessage = generatePRReminderMessage(prs, MAX_PR_AGE_DAYS);
 
   if (!prMessage) {
     console.log("No PRs waiting for review");
