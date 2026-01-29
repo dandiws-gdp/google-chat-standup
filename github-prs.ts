@@ -211,12 +211,13 @@ export function generatePRReminderMessage(prs: GitHubPR[], maxAgeDays: number = 
     hiddenByRepo[repository].tooOld = oldPRs.length;
     
     // Then filter recent PRs by review status
+    // Show PRs that have pending reviewers OR only commented/changes_requested (not fully approved)
     const prsWithPendingReview = recentPRs.filter(pr => 
-      pr.reviewers.some(r => r.status === "pending")
+      pr.reviewers.some(r => r.status === "pending" || r.status === "commented" || r.status === "changes_requested")
     );
     
     const prsFullyReviewed = recentPRs.filter(pr => 
-      !pr.reviewers.some(r => r.status === "pending")
+      pr.reviewers.length > 0 && pr.reviewers.every(r => r.status === "approved")
     );
     
     hiddenByRepo[repository].fullyReviewed = prsFullyReviewed.length;
