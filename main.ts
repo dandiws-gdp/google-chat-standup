@@ -126,8 +126,8 @@ async function sendDailyStandup() {
 // Separate function for PR reminders at 8 AM
 async function sendPRReminder() {
   // Fetch PRs waiting for review
-  const prs = await fetchPRsWaitingForReview(GITHUB_TOKEN, GITHUB_REPOS);
-  const prMessage = generatePRReminderMessage(prs, MAX_PR_AGE_DAYS);
+  const { prs, draftCounts } = await fetchPRsWaitingForReview(GITHUB_TOKEN, GITHUB_REPOS);
+  const prMessage = generatePRReminderMessage(prs, MAX_PR_AGE_DAYS, draftCounts);
 
   if (!prMessage) {
     console.log("No PRs waiting for review");

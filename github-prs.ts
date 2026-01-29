@@ -13,19 +13,20 @@ export interface GitHubPR {
 export async function fetchPRsWaitingForReview(
   githubToken: string | undefined,
   githubRepos: string
-): Promise<GitHubPR[]> {
+): Promise<{ prs: GitHubPR[]; draftCounts: Record<string, number> }> {
   if (!githubToken) {
     console.warn("GitHub token is not set. Skipping PR reminder.");
-    return [];
+    return { prs: [], draftCounts: {} };
   }
 
   if (!githubRepos) {
     console.warn("GitHub repositories are not configured. Skipping PR reminder.");
-    return [];
+    return { prs: [], draftCounts: {} };
   }
 
   const repos = githubRepos.split(",").map(repo => repo.trim()).filter(repo => repo);
   const allPRs: GitHubPR[] = [];
+  const draftCounts: Record<string, number> = {};
 
   for (const repo of repos) {
     try {
@@ -95,6 +96,10 @@ export async function fetchPRsWaitingForReview(
 
       const prs = result.data?.repository?.pullRequests?.nodes || [];
       
+      // Count draft PRs for this repository
+      const draftPRs = prs.filter((pr: any) => pr.isDraft);
+      draftCounts[repo] = draftPRs.length;
+      
       for (const pr of prs) {
         // Filter PRs that are waiting for review (not draft)
         if (pr.isDraft) continue;
@@ -162,11 +167,15 @@ export async function fetchPRsWaitingForReview(
     }
   }
 
-  return allPRs;
+  return { prs: allPRs, draftCounts };
 }
 
 // Function to generate PR reminder message
-export function generatePRReminderMessage(prs: GitHubPR[], maxAgeDays: number = 120): string {
+export function generatePRReminderMessage(
+  prs: GitHubPR[], 
+  maxAgeDays: number = 120,
+  draftCounts: Record<string, number> = {}
+): string {
   if (prs.length === 0) {
     return "";
   }
@@ -188,13 +197,13 @@ export function generatePRReminderMessage(prs: GitHubPR[], maxAgeDays: number = 
   }, {} as Record<string, GitHubPR[]>);
 
   // Track hidden PRs per repository
-  const hiddenByRepo: Record<string, { fullyReviewed: number; tooOld: number }> = {};
+  const hiddenByRepo: Record<string, { fullyReviewed: number; tooOld: number; draft: number }> = {};
 
   // Display PRs grouped by repository
   for (const [repository, repoPRs] of Object.entries(prsByRepo)) {
     // Initialize tracking for this repo
     if (!hiddenByRepo[repository]) {
-      hiddenByRepo[repository] = { fullyReviewed: 0, tooOld: 0 };
+      hiddenByRepo[repository] = { fullyReviewed: 0, tooOld: 0, draft: draftCounts[repository] || 0 };
     }
     
     // Filter PRs by age first
@@ -280,7 +289,7 @@ export function generatePRReminderMessage(prs: GitHubPR[], maxAgeDays: number = 
 
   // Add summary at the end - show hidden counts per repository
   const hasHiddenPRs = Object.values(hiddenByRepo).some(
-    counts => counts.fullyReviewed > 0 || counts.tooOld > 0
+    counts => counts.fullyReviewed > 0 || counts.tooOld > 0 || counts.draft > 0
   );
   
   if (hasHiddenPRs) {
@@ -288,13 +297,16 @@ export function generatePRReminderMessage(prs: GitHubPR[], maxAgeDays: number = 
     message += `Hidden PRs:\n\n`;
     
     for (const [repository, counts] of Object.entries(hiddenByRepo)) {
-      if (counts.fullyReviewed > 0 || counts.tooOld > 0) {
+      if (counts.fullyReviewed > 0 || counts.tooOld > 0 || counts.draft > 0) {
         message += `${repository}:\n`;
         if (counts.fullyReviewed > 0) {
           message += `  - ${counts.fullyReviewed} PR${counts.fullyReviewed > 1 ? 's' : ''} fully reviewed\n`;
         }
         if (counts.tooOld > 0) {
           message += `  - ${counts.tooOld} PR${counts.tooOld > 1 ? 's' : ''} older than ${maxAgeDays} days\n`;
+        }
+        if (counts.draft > 0) {
+          message += `  - ${counts.draft} draft PR${counts.draft > 1 ? 's' : ''}\n`;
         }
       }
     }
