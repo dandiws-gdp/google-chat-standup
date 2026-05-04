@@ -144,6 +144,50 @@ async function sendPRReminder() {
   await sendToWebhook(prMessage);
 }
 
+// HTTP handler for Deno Deploy
+async function handler(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  
+  // Health check endpoint
+  if (url.pathname === "/" || url.pathname === "/health") {
+    return new Response(JSON.stringify({ 
+      status: "ok", 
+      service: "Google Chat Standup Bot",
+      timestamp: new Date().toISOString()
+    }), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  
+  // Manual trigger endpoints for testing
+  if (url.pathname === "/trigger/standup" && req.method === "POST") {
+    await sendDailyStandup();
+    return new Response(JSON.stringify({ message: "Standup message sent" }), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  
+  if (url.pathname === "/trigger/pr-reminder" && req.method === "POST") {
+    await sendPRReminder();
+    return new Response(JSON.stringify({ message: "PR reminder sent" }), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  
+  return new Response("Not Found", { status: 404 });
+}
+
+// Register cron jobs
+Deno.cron("daily-standup", "0 3 * * *", async () => {
+  console.log("Standup cron job triggered at:", new Date().toISOString());
+  await sendDailyStandup();
+});
+
+Deno.cron("pr-reminder", "0 1 * * *", async () => {
+  console.log("PR reminder cron job triggered at:", new Date().toISOString());
+  await sendPRReminder();
+});
+
 // For local testing
 if (import.meta.main) {
   if (Deno.args[0] === "test") {
@@ -153,19 +197,10 @@ if (import.meta.main) {
     console.log("Running PR reminder test...");
     await sendPRReminder();
   } else {
-    console.log("Starting daily standup scheduler...");
-    // Schedule the job to run every day at 10:00 AM UTC+7 (3:00 AM UTC) for standup
-    Deno.cron("daily-standup", "0 3 * * *", async () => {
-      console.log("Standup cron job triggered at:", new Date().toISOString());
-      await sendDailyStandup();
-    });
-    
-    // Schedule the job to run every day at 8:00 AM UTC+7 (1:00 AM UTC) for PR reminders
-    Deno.cron("pr-reminder", "0 1 * * *", async () => {
-      console.log("PR reminder cron job triggered at:", new Date().toISOString());
-      await sendPRReminder();
-    });
+    console.log("Starting HTTP server and cron scheduler...");
+    Deno.serve({ port: 8000 }, handler);
   }
 }
 
 export { sendDailyStandup, sendPRReminder };
+export default { fetch: handler };
